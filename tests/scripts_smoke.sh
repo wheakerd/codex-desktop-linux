@@ -981,6 +981,58 @@ SCRIPT
     assert_not_contains "$dpkg_args" "codex-desktop"
 }
 
+test_setup_native_wizard_portal_summary_survives_busctl_sigpipe() {
+    info "Checking setup-native wizard portal summary avoids pipefail SIGPIPE false negatives"
+    local workspace="$TMP_DIR/setup-native-portal-sigpipe"
+    local features_root="$workspace/linux-features"
+    local config="$workspace/features.json"
+    local output_log="$workspace/output.log"
+    local bin_dir="$workspace/bin"
+
+    make_wizard_feature_root "$features_root"
+    printf '%s\n' '{"enabled":[]}' > "$config"
+    mkdir -p "$bin_dir"
+    cat > "$bin_dir/pgrep" <<'SCRIPT'
+#!/usr/bin/env bash
+exit 1
+SCRIPT
+    cat > "$bin_dir/busctl" <<'SCRIPT'
+#!/usr/bin/env bash
+if [ "${1:-}" = "--user" ] && [ "${2:-}" = "--list" ]; then
+    printf '%s\n' 'org.freedesktop.portal.Desktop 1234 xdg-desktop-portal'
+    exit 141
+fi
+exit 1
+SCRIPT
+    chmod +x "$bin_dir/pgrep" "$bin_dir/busctl"
+
+    PATH="$bin_dir:$PATH" \
+    CODEX_BOOTSTRAP_NONINTERACTIVE=1 \
+    CODEX_LINUX_FEATURES_ROOT="$features_root" \
+    CODEX_LINUX_FEATURES_CONFIG="$config" \
+        bash "$REPO_DIR/scripts/bootstrap-wizard.sh" >"$output_log" 2>&1
+
+    assert_contains "$output_log" "portal=available on session bus"
+}
+
+test_setup_native_wizard_warns_when_conversation_mode_lacks_read_aloud() {
+    info "Checking setup-native wizard warns about conversation-mode without Read Aloud"
+    local workspace="$TMP_DIR/setup-native-conversation-warning"
+    local features_root="$workspace/linux-features"
+    local config="$workspace/features.json"
+    local output_log="$workspace/output.log"
+
+    make_wizard_feature_root "$features_root"
+    printf '%s\n' '{"enabled":["conversation-mode"]}' > "$config"
+
+    CODEX_BOOTSTRAP_NONINTERACTIVE=1 \
+    CODEX_LINUX_FEATURES_ROOT="$features_root" \
+    CODEX_LINUX_FEATURES_CONFIG="$config" \
+        bash "$REPO_DIR/scripts/bootstrap-wizard.sh" >"$output_log" 2>&1
+
+    assert_contains "$output_log" "conversation-mode is enabled without read-aloud"
+}
+
 test_upstream_build_app_workflow_tracks_dmg_metadata() {
     info "Checking upstream build-app workflow metadata and cache behavior"
     local workflow="$REPO_DIR/.github/workflows/upstream-build-app.yml"
@@ -3968,6 +4020,8 @@ main() {
     test_setup_native_wizard_disable_is_non_destructive
     test_setup_native_wizard_summary_keeps_existing_config
     test_setup_native_wizard_uses_package_name_for_installed_state
+    test_setup_native_wizard_portal_summary_survives_busctl_sigpipe
+    test_setup_native_wizard_warns_when_conversation_mode_lacks_read_aloud
     test_upstream_build_app_workflow_tracks_dmg_metadata
     test_installer_detects_electron_version_from_plist
     test_installer_keeps_electron_fallback_for_bad_metadata

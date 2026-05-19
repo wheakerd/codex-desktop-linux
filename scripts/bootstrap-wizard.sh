@@ -221,11 +221,18 @@ ydotool_socket_summary() {
 }
 
 portal_summary() {
-    if pgrep -x xdg-desktop-portal >/dev/null 2>&1; then
-        printf 'running'
-    elif command -v busctl >/dev/null 2>&1 &&
-        busctl --user --list 2>/dev/null | grep -q 'org.freedesktop.portal.Desktop'; then
+    local bus_names
+    if command -v busctl >/dev/null 2>&1; then
+        bus_names="$(busctl --user --list 2>/dev/null || true)"
+    else
+        bus_names=""
+    fi
+
+    if grep 'org.freedesktop.portal.Desktop' >/dev/null 2>&1 <<<"$bus_names"; then
         printf 'available on session bus'
+    elif command -v pgrep >/dev/null 2>&1 &&
+        pgrep -f '(^|[/[:space:]])xdg-desktop-portal([[:space:]]|$)' >/dev/null 2>&1; then
+        printf 'running'
     else
         printf 'not detected'
     fi
@@ -415,6 +422,9 @@ print(f"[setup] Enabled Linux features: {csv(final)}")
 unknown_enabled = [feature_id for feature_id in final if feature_id not in features]
 if unknown_enabled:
     warn(f"Enabled feature ids not found in this checkout: {csv(unknown_enabled)}")
+
+if "conversation-mode" in final and "read-aloud" not in final:
+    warn("conversation-mode is enabled without read-aloud; speech output requires the Read Aloud feature.")
 
 if features:
     print("[setup] Available Linux features:")
