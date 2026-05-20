@@ -22,6 +22,7 @@ const {
   applyLinuxRemoteControlClientRevocationRecoveryPatch,
   applyLinuxRemoteControlCopyPatch,
   applyLinuxRemoteControlPreserveConfigPatch,
+  applyLinuxRemoteControlFeatureSyncPatch,
   applyLinuxRemoteControlLoadGatePatch,
   applyLinuxRemoteControlVisibilityPatch,
 } = require("./patch.js");
@@ -67,6 +68,15 @@ function syntheticRecoverableErrorPredicateBundle() {
 
 function syntheticRemoteConnectionVisibilityBundle() {
   return "function d(){return true}function f(){return c(`1042620455`)}function p(){return []}export{d as n,f as r,p as t};";
+}
+
+function syntheticAppMainFeatureSyncBundle() {
+  return [
+    "var GF=[`apps`,`memories`,`plugins`,`tool_call_mcp_elicitation`,`tool_suggest`];",
+    "function KF(){let e=(0,Z.c)(6),t=K(G),[n]=ts(`statsig_default_enable_features`),r=Lc(),i=Io(),a,o;",
+    "return e[0]!==r?(a=()=>{let r=qF(n);qn(`set-experimental-feature-enablement-for-host`,{hostId:t,enablement:r}).catch(n=>{q.error(`Failed to sync experimental feature enablement`,{sensitive:{error:n}})})},o=[r],e[0]=r,e[1]=a,e[2]=o):(a=e[1],o=e[2]),null}",
+    "function qF(e){let t={};for(let n of GF){let r=e[n];r!=null&&(t[n]=r)}return t}",
+  ].join("");
 }
 
 function syntheticCurrentVisibilityBundle() {
@@ -139,6 +149,7 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
       "feature:remote-mobile-control:linux-remote-control-client-account-compatibility",
       "feature:remote-mobile-control:linux-remote-control-client-revocation-recovery",
       "feature:remote-mobile-control:linux-remote-control-load-gate",
+      "feature:remote-mobile-control:linux-remote-control-feature-sync",
       "feature:remote-mobile-control:linux-remote-control-visibility",
       "feature:remote-mobile-control:linux-remote-control-copy",
     ]);
@@ -147,6 +158,7 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
       "main-bundle",
       "main-bundle",
       "main-bundle",
+      "webview-asset",
       "webview-asset",
       "webview-asset",
       "webview-asset",
@@ -225,6 +237,16 @@ test("Linux remote-control load gate enables remote-control environment loading"
   assert.match(patched, /navigator\.userAgent\.includes\(`Linux`\)/);
   assert.match(patched, /return codexLinuxRemoteControlLoadGateEnabled\(\)\|\|c\(`1042620455`\)/);
   assert.equal(applyLinuxRemoteControlLoadGatePatch(patched), patched);
+});
+
+test("Linux remote-control feature sync includes remote_control", () => {
+  const source = syntheticAppMainFeatureSyncBundle();
+  const patched = applyLinuxRemoteControlFeatureSyncPatch(source);
+
+  assert.notEqual(patched, source);
+  assert.match(patched, /`tool_suggest`,`remote_control`\]/);
+  assert.match(patched, /codexLinuxRemoteControlFeatureSyncEnabled/);
+  assert.equal(applyLinuxRemoteControlFeatureSyncPatch(patched), patched);
 });
 
 test("Linux remote-control visibility patch allows Linux when upstream marks availability false", () => {
@@ -354,6 +376,10 @@ test("remote mobile control feature participates in ASAR patching and reports", 
           syntheticRemoteConnectionVisibilityBundle(),
         );
         fs.writeFileSync(
+          path.join(assetsDir, "app-main-test.js"),
+          syntheticAppMainFeatureSyncBundle(),
+        );
+        fs.writeFileSync(
           path.join(assetsDir, "remote-control-connections-visibility-test.js"),
           syntheticVisibilityBundle(),
         );
@@ -382,6 +408,10 @@ test("remote mobile control feature participates in ASAR patching and reports", 
           path.join(assetsDir, "remote-connection-visibility-test.js"),
           "utf8",
         );
+        const patchedAppMainFile = fs.readFileSync(
+          path.join(assetsDir, "app-main-test.js"),
+          "utf8",
+        );
         const patchedRemoteConnectionsSettingsFile = fs.readFileSync(
           path.join(assetsDir, "remote-connections-settings-test.js"),
           "utf8",
@@ -397,6 +427,7 @@ test("remote mobile control feature participates in ASAR patching and reports", 
         assert.match(patchedFile, /codexLinuxRemoteControlDeviceKeyClient/);
         assert.match(patchedFile, /n\.kind===`local`&&process\.platform!==`linux`/);
         assert.match(patchedRemoteConnectionVisibilityFile, /codexLinuxRemoteControlLoadGateEnabled/);
+        assert.match(patchedAppMainFile, /`remote_control`/);
         assert.match(patchedVisibilityFile, /navigator\.userAgent\.includes\(`Linux`\)/);
         assert.match(patchedRemoteConnectionsSettingsFile, /Control this Linux desktop/);
         assert.match(patchedRemoteConnectionsSettingsFile, /SSH connections from this Linux desktop/);
@@ -423,6 +454,12 @@ test("remote mobile control feature participates in ASAR patching and reports", 
         assert.ok(
           report.patches.some((patch) =>
             patch.name === "feature:remote-mobile-control:linux-remote-control-load-gate" &&
+            patch.status === "applied",
+          ),
+        );
+        assert.ok(
+          report.patches.some((patch) =>
+            patch.name === "feature:remote-mobile-control:linux-remote-control-feature-sync" &&
             patch.status === "applied",
           ),
         );
