@@ -73,6 +73,12 @@ pub async fn run_apply_wrapper_update(
         return Ok(());
     }
 
+    if state.wrapper_dev_mode == Some(true) {
+        warn!("wrapper apply refused because installed wrapper appears ahead of upstream");
+        println!("Wrapper is a local/dev build ahead of upstream; not applying (would downgrade).");
+        return Ok(());
+    }
+
     if state.candidate_wrapper_commit.as_deref().is_none() {
         println!("No wrapper update candidate is ready; nothing to apply.");
         return Ok(());
@@ -407,4 +413,61 @@ fn which(tool: &str) -> Option<PathBuf> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    fn test_paths(root: &Path) -> RuntimePaths {
+        RuntimePaths {
+            config_file: root.join("config/config.toml"),
+            state_file: root.join("state/state.json"),
+            log_file: root.join("state/service.log"),
+            cache_dir: root.join("cache"),
+            state_dir: root.join("state"),
+            config_dir: root.join("config"),
+        }
+    }
+
+    fn test_config(root: &Path) -> RuntimeConfig {
+        RuntimeConfig {
+            dmg_url: "https://example.com/Codex.dmg".to_string(),
+            initial_check_delay_seconds: 1,
+            check_interval_hours: 6,
+            auto_install_on_app_exit: true,
+            notifications: false,
+            workspace_root: root.join("cache"),
+            builder_bundle_root: root.join("builder"),
+            app_executable_path: root.join("not-running-electron"),
+            enable_wrapper_updates: true,
+            wrapper_remote: String::new(),
+            wrapper_branch: "main".to_string(),
+        }
+    }
+
+    #[tokio::test]
+    async fn dev_mode_candidate_is_a_noop_to_avoid_downgrade() {
+        let root = tempdir().unwrap();
+        let config = test_config(root.path());
+        let paths = test_paths(root.path());
+        let mut state = PersistedState::new(true);
+        state.wrapper_dev_mode = Some(true);
+        state.candidate_wrapper_commit = Some("a".repeat(40));
+        state.candidate_wrapper_version = Some("0.9.0".to_string());
+
+        run_apply_wrapper_update(&config, &mut state, &paths)
+            .await
+            .expect("dev-mode apply should silently skip");
+
+        assert_eq!(state.status, UpdateStatus::Idle);
+        assert_eq!(state.wrapper_dev_mode, Some(true));
+        let expected_commit = "a".repeat(40);
+        assert_eq!(
+            state.candidate_wrapper_commit.as_deref(),
+            Some(expected_commit.as_str())
+        );
+        assert_eq!(state.candidate_wrapper_version.as_deref(), Some("0.9.0"));
+    }
 }

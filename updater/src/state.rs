@@ -114,6 +114,10 @@ pub struct PersistedState {
     /// update.
     #[serde(default)]
     pub wrapper_changelog: Option<String>,
+    /// True when the installed wrapper build appears to be ahead of upstream,
+    /// so applying the remote candidate would be a downgrade.
+    #[serde(default)]
+    pub wrapper_dev_mode: Option<bool>,
 }
 
 impl PersistedState {
@@ -147,6 +151,7 @@ impl PersistedState {
             candidate_wrapper_version: None,
             candidate_wrapper_commit: None,
             wrapper_changelog: None,
+            wrapper_dev_mode: None,
         }
     }
 
@@ -182,6 +187,7 @@ impl PersistedState {
         self.candidate_wrapper_version = None;
         self.candidate_wrapper_commit = None;
         self.wrapper_changelog = None;
+        self.wrapper_dev_mode = None;
     }
 }
 

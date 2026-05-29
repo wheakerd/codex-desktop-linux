@@ -382,49 +382,75 @@ fn detect_and_record_wrapper_update(
         return Ok(false);
     };
 
-    let update = match wrapper::detect_from_bundle_root(
+    use wrapper::WrapperDetectionState::*;
+
+    let detection = match wrapper::detect_state_from_bundle_root(
         &config.builder_bundle_root,
         &installed,
         &config.wrapper_remote,
         &config.wrapper_branch,
     ) {
-        Ok(Some(update)) => update,
-        Ok(None) => {
-            clear_stale_wrapper_update_and_persist(config, state, paths)?;
-            return Ok(false);
-        }
+        Ok(result) => result,
         Err(error) => {
             warn!(?error, "wrapper update detection failed");
-            clear_stale_wrapper_update_and_persist(config, state, paths)?;
+            let original_state = state.clone();
+            state.installed_wrapper_version = installed.version;
+            state.installed_wrapper_commit = Some(installed.commit);
+            persist_if_changed(paths, state, &original_state)?;
             return Ok(false);
         }
     };
 
     let original_state = state.clone();
-    state.installed_wrapper_version = update.installed_version.clone();
-    state.installed_wrapper_commit = Some(update.installed_commit.clone());
-    state.candidate_wrapper_version = update.candidate_version.clone();
-    state.candidate_wrapper_commit = Some(update.candidate_commit.clone());
-    state.wrapper_changelog = Some(update.changelog.clone());
-    persist_if_changed(paths, state, &original_state)?;
+    state.installed_wrapper_version = installed.version.clone();
+    state.installed_wrapper_commit = Some(installed.commit.clone());
 
-    let change_count = update
-        .changelog
-        .lines()
-        .filter(|l| !l.trim().is_empty())
-        .count();
-    maybe_notify(
-        state,
-        paths,
-        config.notifications,
-        &format!("wrapper_update:{}", update.candidate_commit),
-        "Codex Desktop wrapper update available",
-        &format!(
-            "A newer Linux wrapper build is available ({change_count} change(s)). Rebuild to apply."
-        ),
-    )?;
+    match detection {
+        (UpdateAvailable, Some(update)) => {
+            state.wrapper_dev_mode = Some(false);
+            state.installed_wrapper_version = update.installed_version.clone();
+            state.installed_wrapper_commit = Some(update.installed_commit.clone());
+            state.candidate_wrapper_version = update.candidate_version.clone();
+            state.candidate_wrapper_commit = Some(update.candidate_commit.clone());
+            state.wrapper_changelog = Some(update.changelog.clone());
+            persist_if_changed(paths, state, &original_state)?;
 
-    Ok(true)
+            let change_count = update
+                .changelog
+                .lines()
+                .filter(|l| !l.trim().is_empty())
+                .count();
+            maybe_notify(
+                state,
+                paths,
+                config.notifications,
+                &format!("wrapper_update:{}", update.candidate_commit),
+                "Codex Desktop wrapper update available",
+                &format!(
+                    "A newer Linux wrapper build is available ({change_count} change(s)). Rebuild to apply."
+                ),
+            )?;
+
+            Ok(true)
+        }
+        (DevMode, _) => {
+            state.clear_wrapper_update_candidate();
+            state.wrapper_dev_mode = Some(true);
+            persist_if_changed(paths, state, &original_state)?;
+            Ok(false)
+        }
+        (Aligned, _) => {
+            state.clear_wrapper_update_candidate();
+            state.wrapper_dev_mode = Some(false);
+            persist_if_changed(paths, state, &original_state)?;
+            Ok(false)
+        }
+        (UnknownOffline, _) | (UpdateAvailable, None) => {
+            state.clear_wrapper_update_candidate();
+            persist_if_changed(paths, state, &original_state)?;
+            Ok(false)
+        }
+    }
 }
 
 fn run_check_wrapper(
@@ -464,6 +490,8 @@ fn run_check_wrapper(
         if let Some(changelog) = state.wrapper_changelog.as_deref() {
             println!("\n{changelog}");
         }
+    } else if state.wrapper_dev_mode == Some(true) {
+        println!("wrapper is a local/dev build ahead of upstream; updates are disabled.");
     } else {
         println!("wrapper is up to date (or not a git checkout).");
     }
@@ -1502,6 +1530,7 @@ mod tests {
         state.candidate_wrapper_commit = Some("stale".to_string());
         state.candidate_wrapper_version = Some("0.9.0".to_string());
         state.wrapper_changelog = Some("old changelog".to_string());
+        state.wrapper_dev_mode = Some(true);
 
         let found = detect_and_record_wrapper_update(&config, &mut state, &paths)?;
 
@@ -1510,10 +1539,12 @@ mod tests {
         assert_eq!(state.candidate_wrapper_commit, None);
         assert_eq!(state.candidate_wrapper_version, None);
         assert_eq!(state.wrapper_changelog, None);
+        assert_eq!(state.wrapper_dev_mode, None);
 
         let persisted = PersistedState::load_or_default(&paths.state_file, true)?;
         assert_eq!(persisted.candidate_wrapper_commit, None);
         assert_eq!(persisted.wrapper_changelog, None);
+        assert_eq!(persisted.wrapper_dev_mode, None);
         Ok(())
     }
 
@@ -1531,6 +1562,7 @@ mod tests {
         state.candidate_wrapper_commit = Some("stale".to_string());
         state.candidate_wrapper_version = Some("0.9.0".to_string());
         state.wrapper_changelog = Some("old changelog".to_string());
+        state.wrapper_dev_mode = Some(true);
 
         let found = detect_and_record_wrapper_update(&config, &mut state, &paths)?;
 
@@ -1540,11 +1572,54 @@ mod tests {
         assert_eq!(state.candidate_wrapper_commit, None);
         assert_eq!(state.candidate_wrapper_version, None);
         assert_eq!(state.wrapper_changelog, None);
+        assert_eq!(state.wrapper_dev_mode, None);
 
         let persisted = PersistedState::load_or_default(&paths.state_file, true)?;
         assert_eq!(persisted.installed_wrapper_commit, None);
         assert_eq!(persisted.candidate_wrapper_commit, None);
         assert_eq!(persisted.wrapper_changelog, None);
+        assert_eq!(persisted.wrapper_dev_mode, None);
+        Ok(())
+    }
+
+    #[test]
+    fn unknown_wrapper_detection_clears_stale_candidate_but_records_installed_metadata(
+    ) -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let paths = test_paths(temp.path());
+        paths.ensure_dirs()?;
+        let mut config = test_config(temp.path());
+        config.enable_wrapper_updates = true;
+        std::fs::create_dir_all(config.builder_bundle_root.join(".codex-linux"))?;
+        std::fs::write(
+            config
+                .builder_bundle_root
+                .join(".codex-linux/source-info.json"),
+            r#"{
+  "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "version": "0.8.1"
+}
+"#,
+        )?;
+
+        let mut state = PersistedState::new(true);
+        state.candidate_wrapper_commit = Some("stale".to_string());
+        state.candidate_wrapper_version = Some("0.9.0".to_string());
+        state.wrapper_changelog = Some("old changelog".to_string());
+        state.wrapper_dev_mode = Some(true);
+
+        let found = detect_and_record_wrapper_update(&config, &mut state, &paths)?;
+
+        assert!(!found);
+        assert_eq!(
+            state.installed_wrapper_commit.as_deref(),
+            Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        );
+        assert_eq!(state.installed_wrapper_version.as_deref(), Some("0.8.1"));
+        assert_eq!(state.candidate_wrapper_commit, None);
+        assert_eq!(state.candidate_wrapper_version, None);
+        assert_eq!(state.wrapper_changelog, None);
+        assert_eq!(state.wrapper_dev_mode, None);
         Ok(())
     }
 
@@ -1560,6 +1635,7 @@ mod tests {
         state.candidate_wrapper_commit = Some("stale".to_string());
         state.candidate_wrapper_version = Some("0.9.0".to_string());
         state.wrapper_changelog = Some("old changelog".to_string());
+        state.wrapper_dev_mode = Some(true);
 
         run_check_cycle(&config, &mut state, &paths).await?;
 
@@ -1567,9 +1643,11 @@ mod tests {
         assert_eq!(state.candidate_wrapper_commit, None);
         assert_eq!(state.candidate_wrapper_version, None);
         assert_eq!(state.wrapper_changelog, None);
+        assert_eq!(state.wrapper_dev_mode, None);
         let persisted = PersistedState::load_or_default(&paths.state_file, true)?;
         assert_eq!(persisted.candidate_wrapper_commit, None);
         assert_eq!(persisted.wrapper_changelog, None);
+        assert_eq!(persisted.wrapper_dev_mode, None);
         Ok(())
     }
 
@@ -1585,6 +1663,7 @@ mod tests {
         state.candidate_wrapper_commit = Some("stale".to_string());
         state.candidate_wrapper_version = Some("0.9.0".to_string());
         state.wrapper_changelog = Some("old changelog".to_string());
+        state.wrapper_dev_mode = Some(true);
 
         run_check_now(&config, &mut state, &paths, true).await?;
 
@@ -1592,9 +1671,11 @@ mod tests {
         assert_eq!(state.candidate_wrapper_commit, None);
         assert_eq!(state.candidate_wrapper_version, None);
         assert_eq!(state.wrapper_changelog, None);
+        assert_eq!(state.wrapper_dev_mode, None);
         let persisted = PersistedState::load_or_default(&paths.state_file, true)?;
         assert_eq!(persisted.candidate_wrapper_commit, None);
         assert_eq!(persisted.wrapper_changelog, None);
+        assert_eq!(persisted.wrapper_dev_mode, None);
         Ok(())
     }
 

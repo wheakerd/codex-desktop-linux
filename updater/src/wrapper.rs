@@ -57,6 +57,19 @@ pub struct WrapperUpdate {
     pub changelog: String,
 }
 
+/// Outcome of comparing the installed wrapper build against the tracked remote.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WrapperDetectionState {
+    /// Installed commit matches the tracked head.
+    Aligned,
+    /// A genuinely newer tracked commit is available.
+    UpdateAvailable,
+    /// Installed build appears to be local/ahead; applying would downgrade it.
+    DevMode,
+    /// Detection could not reach or inspect the remote state.
+    UnknownOffline,
+}
+
 fn guarded_git_ssh_command() -> String {
     let base = std::env::var("GIT_SSH_COMMAND")
         .ok()
@@ -386,27 +399,45 @@ pub fn detect_wrapper_update_for_installed(
     remote: &str,
     branch: &str,
 ) -> Result<Option<WrapperUpdate>> {
+    let (_state, update) =
+        detect_wrapper_update_state_for_installed(repo, installed, remote, branch)?;
+    Ok(update)
+}
+
+pub fn detect_wrapper_update_state_for_installed(
+    repo: &Path,
+    installed: &WrapperVersion,
+    remote: &str,
+    branch: &str,
+) -> Result<(WrapperDetectionState, Option<WrapperUpdate>)> {
+    use WrapperDetectionState::*;
+
+    if installed.commit.trim().is_empty() {
+        return Ok((UnknownOffline, None));
+    }
+
     if !is_git_checkout(repo) {
-        return Ok(None);
+        return Ok((UnknownOffline, None));
     }
 
     let Some(candidate_commit) = fetch_remote_head(repo, remote, branch) else {
-        return Ok(None);
+        return Ok((UnknownOffline, None));
     };
 
     if candidate_commit == installed.commit {
-        return Ok(None);
+        return Ok((Aligned, None));
     }
 
     // Bring the candidate commit + metadata blobs into the local object store
     // so ancestry, version, and changelog can be read. Does not touch the
     // working tree, but it may update FETCH_HEAD and the local object store.
     if !fetch_objects(repo, remote, branch) {
-        return Ok(None);
+        return Ok((UnknownOffline, None));
     }
 
-    if !commit_is_ancestor(repo, &installed.commit, &candidate_commit).unwrap_or(false) {
-        return Ok(None);
+    match commit_is_ancestor(repo, &installed.commit, &candidate_commit) {
+        Some(true) => {}
+        Some(false) | None => return Ok((DevMode, None)),
     }
 
     let installed_version = installed
@@ -421,13 +452,16 @@ pub fn detect_wrapper_update_for_installed(
     );
     let candidate_version = read_wrapper_version_at_commit(repo, &candidate_commit);
 
-    Ok(Some(WrapperUpdate {
-        installed_commit: installed.commit.clone(),
-        installed_version,
-        candidate_commit,
-        candidate_version,
-        changelog,
-    }))
+    Ok((
+        UpdateAvailable,
+        Some(WrapperUpdate {
+            installed_commit: installed.commit.clone(),
+            installed_version,
+            candidate_commit,
+            candidate_version,
+            changelog,
+        }),
+    ))
 }
 
 /// Convenience for callers that hold a `builder_bundle_root` path.
@@ -438,6 +472,16 @@ pub fn detect_from_bundle_root(
     branch: &str,
 ) -> Result<Option<WrapperUpdate>> {
     detect_wrapper_update_for_installed(bundle_root, installed, remote, branch)
+}
+
+/// Convenience for callers that need the explicit detection state.
+pub fn detect_state_from_bundle_root(
+    bundle_root: &Path,
+    installed: &WrapperVersion,
+    remote: &str,
+    branch: &str,
+) -> Result<(WrapperDetectionState, Option<WrapperUpdate>)> {
+    detect_wrapper_update_state_for_installed(bundle_root, installed, remote, branch)
 }
 
 #[cfg(test)]
@@ -617,6 +661,15 @@ exit 0
         assert_ne!(update.installed_commit, update.candidate_commit);
         assert_eq!(update.installed_version.as_deref(), Some("0.8.1"));
         assert_eq!(update.candidate_version.as_deref(), Some("0.9.0"));
+        let installed = installed_wrapper(&clone_path).expect("installed");
+        let (state, state_update) =
+            detect_wrapper_update_state_for_installed(&clone_path, &installed, "origin", "main")
+                .unwrap();
+        assert_eq!(state, WrapperDetectionState::UpdateAvailable);
+        assert_eq!(
+            state_update.expect("state update").candidate_commit,
+            update.candidate_commit
+        );
         // The candidate commit's CHANGELOG has a [0.9.0] section, newer than the
         // installed 0.8.1, so the curated changelog is surfaced.
         assert!(
@@ -634,6 +687,12 @@ exit 0
         let clone = tempdir().unwrap();
         let clone_path = clone.path().join("checkout");
         git_clone(origin.path(), &clone_path);
+        let installed = installed_wrapper(&clone_path).expect("installed");
+        let (state, update) =
+            detect_wrapper_update_state_for_installed(&clone_path, &installed, "origin", "main")
+                .unwrap();
+        assert_eq!(state, WrapperDetectionState::Aligned);
+        assert_eq!(update, None);
         assert_eq!(
             detect_wrapper_update(&clone_path, "origin", "main").unwrap(),
             None
@@ -654,6 +713,12 @@ exit 0
         git(&clone_path, &["add", "-A"]);
         git(&clone_path, &["commit", "-q", "-m", "local ahead"]);
 
+        let installed = installed_wrapper(&clone_path).expect("installed");
+        let (state, update) =
+            detect_wrapper_update_state_for_installed(&clone_path, &installed, "origin", "main")
+                .unwrap();
+        assert_eq!(state, WrapperDetectionState::DevMode);
+        assert_eq!(update, None);
         assert_eq!(
             detect_wrapper_update(&clone_path, "origin", "main").unwrap(),
             None
@@ -748,5 +813,9 @@ exit 0
             detect_from_bundle_root(&builder, &installed, "origin", "main").unwrap(),
             None
         );
+        let (state, update) =
+            detect_state_from_bundle_root(&builder, &installed, "origin", "main").unwrap();
+        assert_eq!(state, WrapperDetectionState::UnknownOffline);
+        assert_eq!(update, None);
     }
 }

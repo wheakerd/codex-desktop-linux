@@ -9,6 +9,7 @@ const test = require("node:test");
 
 const {
   applyMainBundlePatch,
+  applyWebviewRuntimePatch,
   applyWrapperUpdateGeneralSettingsPatch,
   applyWrapperUpdateSettingsPatch,
   patchWrapperUpdateSettingsAssets,
@@ -58,7 +59,20 @@ test("main bundle patch writes app-state wrapper marker", () => {
   assert.match(patched, /pick-features/);
   assert.match(patched, /codex-linux-feature-picker-on-update/);
   assert.match(patched, /codex-wrapper-updater/);
+  assert.match(patched, /wrapper_dev_mode/);
+  assert.match(patched, /installed_wrapper_commit/);
   assert.doesNotMatch(patched, /wrapper-update-pending/);
+  assert.doesNotMatch(patched, /wrapper_status/);
+});
+
+test("webview runtime renders dev-mode and installed-sha chips", () => {
+  const patched = applyWebviewRuntimePatch("console.log('codex');");
+
+  assert.match(patched, /codex-linux-wrapper-sha/);
+  assert.match(patched, /installed_commit/);
+  assert.match(patched, /dev-mode/);
+  assert.match(patched, /\\u2699/);
+  assert.match(patched, /\\u2193/);
 });
 
 test("settings patch adds wrapper update toggle", () => {
