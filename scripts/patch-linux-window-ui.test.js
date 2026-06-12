@@ -3624,7 +3624,7 @@ test("uses Linux managed runtime paths for current Chrome native host sync shape
   });
 });
 
-test("reports drifted Chrome native host runtime resolver as required upstream failure", () => {
+test("reports drifted Chrome native host runtime resolver as optional drift", () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-patch-report-chrome-runtime-drift-"));
   try {
     const buildDir = path.join(tempRoot, ".vite", "build");
@@ -3641,12 +3641,17 @@ test("reports drifted Chrome native host runtime resolver as required upstream f
     captureWarns(() => patchExtractedApp(tempRoot, { report }));
 
     const runtimePatch = report.patches.find((patch) => patch.name === "linux-chrome-native-host-runtime");
-    assert.equal(runtimePatch.status, "failed-required");
+    assert.equal(runtimePatch.status, "skipped-optional");
     assert.match(runtimePatch.reason, /Could not identify Chrome native host runtime resolver shape/);
     assert.ok(
-      validateReport(report, "upstream-build").some((failure) =>
-        failure.startsWith("linux-chrome-native-host-runtime: failed-required"),
+      !validateReport(report, "upstream-build").some((failure) =>
+        failure.startsWith("linux-chrome-native-host-runtime:"),
       ),
+      "browser integration drift must not fail the build",
+    );
+    assert.ok(
+      optionalDriftFromReport(report).some((drift) => drift.name === "linux-chrome-native-host-runtime"),
+      "the drift must still be surfaced in the optional-drift summary",
     );
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
@@ -3704,7 +3709,7 @@ test("handles literal Chrome plugin gate names", () => {
   assert.doesNotMatch(patched, /installWhenMissing:!0,name:'chrome-internal'/);
 });
 
-test("reports missing required Chrome plugin auto-install gate as required upstream validation failure", () => {
+test("reports missing Chrome plugin auto-install gate as optional drift", () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-patch-report-missing-chrome-"));
   try {
     const buildDir = path.join(tempRoot, ".vite", "build");
@@ -3715,12 +3720,16 @@ test("reports missing required Chrome plugin auto-install gate as required upstr
     captureWarns(() => patchExtractedApp(tempRoot, { report }));
 
     const pluginGatePatch = report.patches.find((patch) => patch.name === "linux-chrome-plugin-auto-install");
-    assert.equal(pluginGatePatch.status, "failed-required");
+    assert.equal(pluginGatePatch.status, "skipped-optional");
     assert.match(pluginGatePatch.reason, /Could not find Chrome plugin gate literal/);
     assert.ok(
-      validateReport(report, "upstream-build").some((failure) =>
-        failure.startsWith("linux-chrome-plugin-auto-install: failed-required"),
+      !validateReport(report, "upstream-build").some((failure) =>
+        failure.startsWith("linux-chrome-plugin-auto-install:"),
       ),
+      "browser integration drift must not fail the build",
+    );
+    assert.ok(
+      optionalDriftFromReport(report).some((drift) => drift.name === "linux-chrome-plugin-auto-install"),
     );
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
@@ -3747,7 +3756,7 @@ test("fails hard when the Computer Use gate is recognizable but unpatchable", ()
   );
 });
 
-test("reports missing required Computer Use plugin gate as required upstream validation failure", () => {
+test("reports missing Computer Use plugin gate as optional drift", () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-patch-report-missing-computer-use-"));
   try {
     const buildDir = path.join(tempRoot, ".vite", "build");
@@ -3758,12 +3767,16 @@ test("reports missing required Computer Use plugin gate as required upstream val
     captureWarns(() => patchExtractedApp(tempRoot, { report }));
 
     const pluginGatePatch = report.patches.find((patch) => patch.name === "linux-computer-use-plugin-gate");
-    assert.equal(pluginGatePatch.status, "failed-required");
+    assert.equal(pluginGatePatch.status, "skipped-optional");
     assert.match(pluginGatePatch.reason, /Could not find Computer Use plugin gate literal/);
     assert.ok(
-      validateReport(report, "upstream-build").some((failure) =>
-        failure.startsWith("linux-computer-use-plugin-gate: failed-required"),
+      !validateReport(report, "upstream-build").some((failure) =>
+        failure.startsWith("linux-computer-use-plugin-gate:"),
       ),
+      "Computer Use is a feature — its drift must not fail the build",
+    );
+    assert.ok(
+      optionalDriftFromReport(report).some((drift) => drift.name === "linux-computer-use-plugin-gate"),
     );
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
@@ -4670,15 +4683,19 @@ test("patchExtractedApp records a structured patch report", () => {
     assert.equal(report.iconAsset, "app-test.png");
     assert.equal(report.desktopName, "codex-desktop.desktop");
     assert.deepEqual(report.enabledFeatures, enabledLinuxFeatureIds());
+    // Browser/Computer Use integration drift is optional: the aggregate stays
+    // applied because no required main-bundle patch warned on this fixture.
     assert.ok(
       report.patches.some(
         (patch) =>
           patch.name === "main-process-ui" &&
-          patch.status === "failed-required" &&
+          patch.status === "applied" &&
           patch.sourceKind === "core" &&
-          Array.isArray(patch.warnings) &&
-          patch.warnings.length > 0,
+          patch.warnings === undefined,
       ),
+    );
+    assert.ok(
+      optionalDriftFromReport(report).some((drift) => drift.name === "linux-chrome-plugin-auto-install"),
     );
     assert.ok(report.patches.some((patch) => patch.name === "keybinds-settings" && patch.status === "skipped-optional"));
   } finally {
