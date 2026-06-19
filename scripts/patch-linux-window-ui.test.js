@@ -361,6 +361,43 @@ test("subagent nickname metadata patch accepts current upstream patched aliases"
   assert.deepEqual(warnings, []);
 });
 
+test("subagent metadata descriptor ignores matching sibling bundles without metadata", () => {
+  const descriptor = corePatchDescriptors().find((candidate) =>
+    candidate.id === "subagent-nickname-metadata-shape",
+  );
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-subagent-metadata-sibling-"));
+  try {
+    const assetsDir = path.join(tempRoot, "webview", "assets");
+    fs.mkdirSync(assetsDir, { recursive: true });
+    const siblingSource = "export const hostConfig={local:!0};";
+    const metadataSource = [
+      "function j(e){return e}",
+      "function B(e){if(e==null||typeof e==`string`)return null;let t=Mi(e);return t==null?null:Ni(t)}",
+      "function Mi(e){return`subAgent`in e?e.subAgent:null}",
+      "function Ni(e){return typeof e==`string`?Pi():`thread_spawn`in e?{parentThreadId:j(e.thread_spawn.parent_thread_id),depth:e.thread_spawn.depth,agentNickname:e.thread_spawn.agent_nickname,agentRole:e.thread_spawn.agent_role}:Pi()}",
+      "function Pi(){return{parentThreadId:null,depth:null,agentNickname:null,agentRole:null}}",
+      "function Xl(e){return e==null?null:Zl(e.agentNickname)??Zl(B(e.source)?.agentNickname)}",
+      "function Zl(e){if(e==null)return null;let t=e.trim();return t.length===0?null:t}",
+    ].join("");
+    fs.writeFileSync(path.join(assetsDir, "app-server-manager-signals-test.js"), siblingSource);
+    fs.writeFileSync(path.join(assetsDir, "use-host-config-test.js"), metadataSource);
+
+    const { value: result, warnings } = captureWarns(() =>
+      patchAssetFiles(tempRoot, descriptor.pattern, descriptor.apply, "missing subagent metadata bundle"),
+    );
+
+    assert.deepEqual(result, { matched: 2, changed: 1 });
+    assert.deepEqual(warnings, []);
+    assert.equal(fs.readFileSync(path.join(assetsDir, "app-server-manager-signals-test.js"), "utf8"), siblingSource);
+    assert.match(
+      fs.readFileSync(path.join(assetsDir, "use-host-config-test.js"), "utf8"),
+      /Zl\(e\.agentNickname\)\?\?Zl\(e\.agent_nickname\)\?\?Zl\(B\(e\.source\)\?\.agentNickname\)/,
+    );
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test("Linux target context parses distro, package, and desktop details", () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-linux-target-"));
   try {
