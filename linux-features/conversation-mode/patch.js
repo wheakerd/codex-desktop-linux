@@ -125,21 +125,25 @@ function objectPropVar(objectSource, name, fallback) {
 }
 
 function currentComposerBinding(source) {
-  const bindingPattern = new RegExp(
-    `\\{([^{}]*)\\}\\s*=\\s*${JS_IDENT}\\s*,\\s*` +
-      `\\{([^{}]*startDictation:[^{}]*stopDictation:[^{}]*threadRealtime:[^{}]*)\\}\\s*=\\s*(${JS_IDENT})`,
-    "g",
-  );
-  for (const match of source.matchAll(bindingPattern)) {
-    const propsObject = match[1];
-    const voiceControlsObject = match[2];
-    const voiceControlsVar = match[3];
-    if (objectPropVar(propsObject, "voiceControls", null) !== voiceControlsVar) {
+  const propsPattern = new RegExp(`\\{([^{}]*voiceControls:${JS_IDENT}[^{}]*)\\}\\s*=\\s*${JS_IDENT}`, "g");
+  for (const propsMatch of source.matchAll(propsPattern)) {
+    const propsObject = propsMatch[1];
+    const voiceControlsVar = objectPropVar(propsObject, "voiceControls", null);
+    if (voiceControlsVar == null) {
       continue;
     }
     const requiredProps = ["conversationId", "isResponseInProgress", "onStop", "submitBlockReason"];
-    if (requiredProps.every((name) => objectPropVar(propsObject, name, null) != null)) {
-      return { propsObject, voiceControlsObject, voiceControlsVar };
+    if (!requiredProps.every((name) => objectPropVar(propsObject, name, null) != null)) {
+      continue;
+    }
+    const voiceControlsPattern = new RegExp(
+      `\\{([^{}]*startDictation:[^{}]*stopDictation:[^{}]*threadRealtime:[^{}]*)\\}\\s*=\\s*${escapeRegExp(voiceControlsVar)}`,
+      "g",
+    );
+    voiceControlsPattern.lastIndex = propsMatch.index + propsMatch[0].length;
+    const voiceControlsMatch = voiceControlsPattern.exec(source);
+    if (voiceControlsMatch != null) {
+      return { propsObject, voiceControlsObject: voiceControlsMatch[1], voiceControlsVar };
     }
   }
   return null;
@@ -272,6 +276,9 @@ function applyComposerControlPatch(source) {
   const togglePattern = new RegExp(
     `codexLinuxConversationToggle\\?\\.\\(\\{conversationId:${escapeRegExp(props.conversationId)},startDictation:${JS_IDENT},stopDictation:${JS_IDENT},onStop:${escapeRegExp(props.onStop)},isDictating:${JS_IDENT},isTranscribing:${JS_IDENT},isResponseInProgress:${escapeRegExp(props.isResponseInProgress)},isDictationSupported:${JS_IDENT}\\}\\)`,
   );
+  const anyTogglePattern = new RegExp(
+    `codexLinuxConversationToggle\\?\\.\\(\\{conversationId:${JS_IDENT},startDictation:${JS_IDENT},stopDictation:${JS_IDENT},onStop:${JS_IDENT},isDictating:${JS_IDENT},isTranscribing:${JS_IDENT},isResponseInProgress:${JS_IDENT},isDictationSupported:${JS_IDENT}\\}\\)`,
+  );
   const toggleCall = `codexLinuxConversationToggle?.({${composerTogglePayload(vars, props)}})`;
   if (legacyClickPattern.test(patched)) {
     patched = patched.replace(
@@ -285,6 +292,8 @@ function applyComposerControlPatch(source) {
     );
   } else if (togglePattern.test(patched)) {
     patched = patched.replace(togglePattern, toggleCall);
+  } else if (anyTogglePattern.test(patched)) {
+    patched = patched.replace(anyTogglePattern, toggleCall);
   } else if (!patched.includes("codexLinuxConversationToggle")) {
     warn("Could not find composer voice button click handler", "conversation mode composer control patch");
   }
