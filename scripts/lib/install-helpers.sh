@@ -87,7 +87,8 @@ Environment variables:
                       Developer-only promotion override for a completely built
                       candidate rejected by the shared acceptance profile
   CODEX_KEEP_REJECTED_CANDIDATE=1
-                      Keep a rejected sibling candidate for diagnostics
+                      Keep a rejected or safely unpromoted sibling candidate
+                      for diagnostics
 
 After install, launch with:
   ./codex-app/start.sh

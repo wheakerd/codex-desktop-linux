@@ -36,11 +36,22 @@ app. First installation remains a single atomic sibling rename.
 
 Each build evaluates reports from its own transaction directory, and a
 per-target promotion lock serializes the short final replacement and recovery
-window.
+window. Automated user-local update paths explicitly disable the developer-only
+running-app override. A timer or manual helper may finish building a candidate
+while Electron is open, but promotion is refused until that exact installed
+Electron process exits; the existing app and evidence remain unchanged.
+
+After a successful promotion or journal recovery, cleanup retains exactly one
+managed `<app>.backup-TIMESTAMP[-N]` directory: the app version that was working
+immediately before the accepted candidate. Older managed backups are removed
+under the promotion lock, including read-only local copies derived from Nix.
+Symlinks, regular files, and non-exact/manual backup names are never removed.
+Cleanup failures only warn and are retried by the next install or recovery.
 
 `--fresh` refreshes the DMG and candidate without deleting the working app
-early. Set `CODEX_KEEP_REJECTED_CANDIDATE=1` to retain a rejected candidate for
-debugging. `CODEX_ACCEPTANCE_OVERRIDE=1` is a developer-only emergency escape
+early. Set `CODEX_KEEP_REJECTED_CANDIDATE=1` to retain a rejected or safely
+unpromoted candidate for debugging; otherwise disposable candidates are
+removed. `CODEX_ACCEPTANCE_OVERRIDE=1` is a developer-only emergency escape
 hatch for a completely built candidate; CI and the updater do not set it.
 
 The updater also publishes downloads to immutable, content-addressed paths
@@ -61,6 +72,9 @@ headers so rerunning an obsolete workflow cannot reopen an old issue. The
 identity must contain an ETag or both Last-Modified and Content-Length. If
 either the tested or current identity is unavailable, reconciliation makes no
 issue changes.
+Only issues carrying both the label and a valid hidden 64-character fingerprint
+marker are managed. Manually created labeled issues and malformed markers are
+never updated, reopened, superseded, or closed by the workflow.
 
 ## Manual Validation
 

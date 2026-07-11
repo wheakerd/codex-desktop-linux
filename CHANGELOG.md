@@ -23,6 +23,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Automated user-local updates no longer inherit or set developer overrides
+  that could replace a running Electron app or bypass DMG acceptance. Manual
+  and timer rebuilds now fail safely at promotion, transactional installs retain
+  only the immediately previous app backup, and drift issue automation mutates
+  only issues carrying its valid fingerprint marker.
 - The Add Project folder picker is no longer parented to the Codex window on
   Linux X11. This avoids a GNOME Shell modal input grab that could lock desktop
   input and flood system logs, while preserving parented dialogs on Wayland,

@@ -9,6 +9,8 @@ import errno
 import json
 import os
 from pathlib import Path
+import re
+import stat
 import sys
 import uuid
 
@@ -246,6 +248,42 @@ def recover(args: argparse.Namespace) -> None:
     raise RuntimeError(f"Cannot safely recover interrupted promotion: {journal_path}")
 
 
+def list_stale_backups(args: argparse.Namespace) -> None:
+    final = Path(args.final).absolute()
+    protected = Path(args.protect).absolute() if args.protect else None
+    pattern = re.compile(rf"^{re.escape(final.name)}\.backup-(\d{{14}})(?:-([1-9]\d*))?$")
+    managed: list[tuple[tuple[str, int], Path]] = []
+
+    try:
+        siblings = list(final.parent.iterdir())
+    except FileNotFoundError:
+        return
+
+    for sibling in siblings:
+        match = pattern.fullmatch(sibling.name)
+        if match is None:
+            continue
+        try:
+            metadata = sibling.lstat()
+        except FileNotFoundError:
+            continue
+        # Never follow or remove a symlink, regular file, or similarly named
+        # maintainer-owned path.
+        if not stat.S_ISDIR(metadata.st_mode):
+            continue
+        managed.append(((match.group(1), int(match.group(2) or 0)), sibling.absolute()))
+
+    keep: Path | None = None
+    if protected is not None and any(path == protected for _, path in managed):
+        keep = protected
+    elif args.keep_latest and managed:
+        keep = max(managed, key=lambda item: item[0])[1]
+
+    for _, path in managed:
+        if path != keep:
+            print(path)
+
+
 def parser() -> argparse.ArgumentParser:
     value = argparse.ArgumentParser()
     subcommands = value.add_subparsers(dest="command", required=True)
@@ -272,6 +310,12 @@ def parser() -> argparse.ArgumentParser:
     recover_parser.add_argument("--journal", required=True)
     recover_parser.add_argument("--final", required=True)
     recover_parser.set_defaults(function=recover)
+
+    stale_parser = subcommands.add_parser("list-stale-backups")
+    stale_parser.add_argument("--final", required=True)
+    stale_parser.add_argument("--protect")
+    stale_parser.add_argument("--keep-latest", action="store_true")
+    stale_parser.set_defaults(function=list_stale_backups)
     return value
 
 

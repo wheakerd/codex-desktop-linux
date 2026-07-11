@@ -30,6 +30,45 @@ candidate_promotion_journal_path() {
     printf '%s/.%s.promotion.json\n' "$(dirname "$final_dir")" "$(basename "$final_dir")"
 }
 
+remove_managed_candidate_backup() {
+    local path="$1"
+    [ -d "$path" ] && [ ! -L "$path" ] || return 0
+    # Nix/store-derived app copies may retain read-only directory modes.
+    # `find -P` also avoids dereferencing a path replaced with a symlink.
+    find -P "$path" -type d -exec chmod u+w {} + 2>/dev/null || true
+    [ -d "$path" ] && [ ! -L "$path" ] || return 0
+    rm -rf -- "$path"
+}
+
+cleanup_managed_candidate_backups_locked() {
+    local final_dir="$1"
+    local protected_backup="${2:-}"
+    local keep_latest="${3:-0}"
+    local stale_backups=""
+    local stale_backup
+    local args=(list-stale-backups --final "$final_dir")
+
+    if [ -n "$protected_backup" ]; then
+        args+=(--protect "$protected_backup")
+    elif [ "$keep_latest" = "1" ]; then
+        args+=(--keep-latest)
+    fi
+    if [ "${CODEX_PROMOTION_TEST_FAIL_BACKUP_CLEANUP:-0}" = "1" ]; then
+        warn "Could not prune old app backups (simulated failure); cleanup will be retried"
+        return 0
+    fi
+    if ! stale_backups="$(python3 "$CANDIDATE_PROMOTION_HELPER" "${args[@]}")"; then
+        warn "Could not enumerate old app backups; cleanup will be retried"
+        return 0
+    fi
+    while IFS= read -r stale_backup; do
+        [ -n "$stale_backup" ] || continue
+        if ! remove_managed_candidate_backup "$stale_backup"; then
+            warn "Could not remove old app backup; cleanup will be retried: $stale_backup"
+        fi
+    done <<<"$stale_backups"
+}
+
 recover_pending_candidate_promotion_locked() {
     local final_dir="$1"
     local journal_file
@@ -45,6 +84,7 @@ recover_pending_candidate_promotion_locked() {
         export PROMOTED_BACKUP_APP_DIR
         info "Recovered previous app backup: $recovered_backup"
     fi
+    cleanup_managed_candidate_backups_locked "$final_dir" "$recovered_backup" 1
 }
 
 recover_pending_candidate_promotion() {
@@ -87,7 +127,17 @@ promote_candidate_install() {
     # The long build is allowed while the app runs. Only the short atomic
     # promotion window requires the installed executable to be stopped.
     INSTALL_DIR="$final_dir"
-    assert_install_target_not_running
+    if declare -F install_target_is_stopped >/dev/null 2>&1; then
+        if ! install_target_is_stopped; then
+            warn "ChatGPT Desktop is still running from $final_dir (pid $RUNNING_INSTALL_TARGET_PID); accepted candidate was not promoted"
+            INSTALL_DIR="$previous_install_dir"
+            flock -u "$promotion_lock_fd"
+            exec {promotion_lock_fd}>&-
+            return 1
+        fi
+    else
+        assert_install_target_not_running
+    fi
     INSTALL_DIR="$previous_install_dir"
 
     if [ -e "$final_dir" ]; then
@@ -132,10 +182,12 @@ promote_candidate_install() {
             exec {promotion_lock_fd}>&-
             return 1
         fi
+        cleanup_managed_candidate_backups_locked "$final_dir" "$backup"
     else
         info "Promoting accepted candidate: $final_dir"
         mv "$candidate_dir" "$final_dir"
         backup=""
+        cleanup_managed_candidate_backups_locked "$final_dir"
     fi
 
     if [ -n "$backup" ] && [ ! -d "$backup" ]; then

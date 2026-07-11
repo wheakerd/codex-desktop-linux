@@ -140,10 +140,18 @@ fn refresh_installed_wrapper_state(config: &RuntimeConfig, state: &mut Persisted
     }
 }
 
+/// Force safety policy for every automated user-local installer command.
+fn configure_user_local_install_command(command: &mut Command) -> &mut Command {
+    // Automated updates must never inherit developer-only safety overrides.
+    command
+        .env("CODEX_ACCEPTANCE_OVERRIDE", "0")
+        .env("CODEX_INSTALL_ALLOW_RUNNING", "0")
+}
+
 /// User-local apply. Prefers the contrib `codex-desktop-update` helper (managed
 /// checkout pull + in-place `install.sh`) when present; otherwise falls back to
 /// fetching the wrapper source and running its `install.sh` directly against the
-/// running app dir. Runs as the user, no privilege escalation.
+/// installed app dir. Runs as the user, no privilege escalation.
 async fn apply_user_local(
     config: &RuntimeConfig,
     paths: &RuntimePaths,
@@ -153,7 +161,8 @@ async fn apply_user_local(
     if let Some(helper) = user_local_update_helper() {
         info!(helper = %helper.display(), "applying wrapper update via user-local helper");
         let mut cmd = Command::new(&helper);
-        cmd.arg("--quiet").env("CODEX_ACCEPTANCE_OVERRIDE", "0");
+        cmd.arg("--quiet");
+        configure_user_local_install_command(&mut cmd);
         // The contrib helper honors a caller-set CODEX_LINUX_FEATURES_CONFIG over
         // its repo-local default, so the in-app picker's selection wins.
         if let Some(config_path) = &feature_config {
@@ -187,10 +196,9 @@ async fn apply_user_local(
     info!(app_dir = %app_dir.display(), "rebuilding user-local app in place via install.sh");
     let mut cmd = Command::new(&install_sh);
     cmd.current_dir(&wrapper_src)
-        .env("CODEX_ACCEPTANCE_OVERRIDE", "0")
-        .env("CODEX_INSTALL_ALLOW_RUNNING", "1")
         .env("CODEX_INSTALL_ROOT", &install_root)
         .env("CODEX_INSTALL_DIR", &app_dir);
+    configure_user_local_install_command(&mut cmd);
     if let Some(config_path) = &feature_config {
         cmd.env("CODEX_LINUX_FEATURES_CONFIG", config_path);
     }
@@ -614,6 +622,31 @@ mod tests {
             wrapper_remote: String::new(),
             wrapper_branch: "main".to_string(),
             generated_artifact_cleanup: Default::default(),
+        }
+    }
+
+    #[test]
+    fn automated_user_local_commands_force_safety_overrides_off() {
+        for program in ["codex-desktop-update", "install.sh"] {
+            let mut command = Command::new(program);
+            configure_user_local_install_command(&mut command);
+            let envs = command
+                .get_envs()
+                .map(|(key, value)| (key.to_owned(), value.map(ToOwned::to_owned)))
+                .collect::<std::collections::HashMap<_, _>>();
+
+            assert_eq!(
+                envs.get(std::ffi::OsStr::new("CODEX_INSTALL_ALLOW_RUNNING"))
+                    .and_then(Option::as_deref),
+                Some(std::ffi::OsStr::new("0")),
+                "{program} must not bypass the running-app gate"
+            );
+            assert_eq!(
+                envs.get(std::ffi::OsStr::new("CODEX_ACCEPTANCE_OVERRIDE"))
+                    .and_then(Option::as_deref),
+                Some(std::ffi::OsStr::new("0")),
+                "{program} must not bypass acceptance"
+            );
         }
     }
 

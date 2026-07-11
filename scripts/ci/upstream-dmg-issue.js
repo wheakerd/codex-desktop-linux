@@ -51,7 +51,10 @@ async function listTrackingIssues(github, repo) {
   const issues = github.paginate
     ? await github.paginate(github.rest.issues.listForRepo, params)
     : (await github.rest.issues.listForRepo(params)).data;
-  return issues.filter((issue) => issue.pull_request == null);
+  // The label is public repository metadata and may also be useful on a
+  // maintainer-created issue. Only the hidden fingerprint marker proves that
+  // this automation owns an issue and may mutate its lifecycle.
+  return issues.filter((issue) => issue.pull_request == null && issueFingerprint(issue) !== null);
 }
 
 async function ensureLabel(github, repo) {

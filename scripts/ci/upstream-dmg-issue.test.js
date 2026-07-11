@@ -117,3 +117,63 @@ test("does not mutate accepted or rejected issues when either HTTP identity is m
     }
   }
 });
+
+test("accepted candidates ignore labeled issues without a valid automation marker", async () => {
+  const fixture = fakeGithub([
+    { number: 20, state: "open", body: "Manually tracked upstream investigation" },
+    { number: 21, state: "open", body: "<!-- upstream-dmg-fingerprint:not-a-sha -->" },
+  ]);
+
+  const result = await reconcileUpstreamDmgIssue({
+    github: fixture.github,
+    repo: { owner: "o", repo: "r" },
+    decision: decision("accepted", "5".repeat(64)),
+    currentHttpIdentityKey: "current",
+  });
+
+  assert.equal(result.action, "closed-resolved");
+  assert.equal(result.count, 0);
+  assert.equal(fixture.calls.length, 0);
+});
+
+test("rejected candidates create a managed issue without mutating an unowned labeled issue", async () => {
+  const fixture = fakeGithub([
+    { number: 22, state: "open", body: "Manually tracked upstream investigation" },
+  ]);
+
+  const result = await reconcileUpstreamDmgIssue({
+    github: fixture.github,
+    repo: { owner: "o", repo: "r" },
+    decision: decision("rejected", "6".repeat(64)),
+    currentHttpIdentityKey: "current",
+  });
+
+  assert.equal(result.action, "created");
+  assert.equal(fixture.calls.filter(([name]) => name === "create").length, 1);
+  assert.equal(
+    fixture.calls.some(([, args]) => args.issue_number === 22),
+    false,
+  );
+});
+
+test("mixed reconciliation mutates only issues carrying a valid fingerprint marker", async () => {
+  const fixture = fakeGithub([
+    { number: 23, state: "open", body: "Manually tracked upstream investigation" },
+    { number: 24, state: "open", body: fingerprintMarker("7".repeat(64)) },
+  ]);
+
+  await reconcileUpstreamDmgIssue({
+    github: fixture.github,
+    repo: { owner: "o", repo: "r" },
+    decision: decision("rejected", "8".repeat(64)),
+    currentHttpIdentityKey: "current",
+  });
+
+  assert.equal(
+    fixture.calls.some(([, args]) => args.issue_number === 23),
+    false,
+  );
+  assert.ok(fixture.calls.some(([name, args]) => (
+    name === "update" && args.issue_number === 24 && args.state === "closed"
+  )));
+});

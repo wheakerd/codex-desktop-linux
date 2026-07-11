@@ -187,7 +187,14 @@ transactional_install() {
 
     mkdir -p "$candidate_dir/.codex-linux"
     cp "$decision_path" "$candidate_dir/.codex-linux/upstream-dmg-decision.json"
-    promote_candidate_install "$candidate_dir" "$final_dir"
+    if ! promote_candidate_install "$candidate_dir" "$final_dir"; then
+        if [ "${CODEX_KEEP_REJECTED_CANDIDATE:-0}" != "1" ]; then
+            remove_tree_safely "$candidate_dir"
+        else
+            warn "Unpromoted candidate retained for diagnostics: $candidate_dir"
+        fi
+        error "Accepted candidate could not be promoted; the existing app was not changed"
+    fi
     info "Acceptance transaction reports: $report_dir"
     info "Acceptance decision: $published_decision_path"
     if [ -n "${PROMOTED_BACKUP_APP_DIR:-}" ]; then

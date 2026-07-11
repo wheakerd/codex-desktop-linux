@@ -117,6 +117,11 @@ Primary human docs: [architecture](docs/architecture.md),
   `systemd --user` updater service on a best-effort basis.
 - Failed privileged updater installs stay failed until a newer rebuild or an
   explicit retry path; avoid auto-retrying every reconcile cycle.
+- Automated user-local updater paths must force acceptance and running-app
+  overrides off. They may build alongside a running app, but promotion must
+  wait for exit or fail without replacing the installed runtime.
+- Transactional app promotion retains only the immediately previous managed
+  app backup; older exact managed backups are pruned under the promotion lock.
 - Manual rollback uses the last-known-good package recorded in updater state
   and the same format-specific command layer as normal installs.
 - Local installs, updater rebuilds, and scheduled CI use the same upstream DMG
