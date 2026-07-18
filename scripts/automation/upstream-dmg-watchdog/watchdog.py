@@ -577,6 +577,13 @@ def augment_nix_pr_checks(pr: dict, repository: str) -> tuple[dict, dict | None]
             "conclusion": str(job.get("conclusion") or "").upper(),
             "detailsUrl": job.get("url") or details.get("url"),
         })
+    if not synthetic and details.get("conclusion"):
+        synthetic.append({
+            "name": "CI",
+            "status": str(details.get("status") or "").upper(),
+            "conclusion": str(details.get("conclusion") or "").upper(),
+            "detailsUrl": details.get("url"),
+        })
     return {**pr, "statusCheckRollup": synthetic}, details
 
 

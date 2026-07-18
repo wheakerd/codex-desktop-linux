@@ -950,6 +950,44 @@ class WatchdogTests(unittest.TestCase):
         self.assertEqual(len(dispatches), 1)
         self.assertIn("ci.yml", dispatches[0])
 
+    def test_workflow_level_action_required_exact_head_ci_is_transient(self):
+        headers = self.headers("a.headers", "etag-a", self.dmg_a)
+        self.complete_baseline(headers)
+        head = "a" * 40
+        pr = self.nix_pr(self.sri(self.dmg_a), head=head, statusCheckRollup=[])
+        scenario, env = self.write_scenario({
+            "main_flake": self.flake("sha256-" + "A" * 43 + "="),
+            "head_flakes": {head: self.flake(self.sri(self.dmg_a))},
+            "prs": [pr],
+            "ci_runs": [{
+                "databaseId": 79,
+                "status": "completed",
+                "conclusion": "action_required",
+                "headSha": head,
+                "url": "https://run/79",
+            }],
+            "run_views": {"79": {
+                "databaseId": 79,
+                "status": "completed",
+                "conclusion": "action_required",
+                "headSha": head,
+                "url": "https://run/79",
+                "jobs": [],
+            }},
+        })
+
+        first = self.nix_probe(headers, env, now=1100)
+        second = self.nix_probe(headers, env, now=2001)
+
+        self.assertEqual(first.stdout.strip(), "NIX_ACTIVE")
+        self.assertEqual(second.stdout.strip(), "NIX_ACTIVE")
+        state = self.load_state()
+        self.assertNotEqual(state["active_campaign"]["campaign_phase"], "nix-repair")
+        self.assertEqual(state["nix_runs"][-1]["classification"], "transient")
+        dispatches = [call for call in self.fake_calls(scenario) if call[:2] == ["workflow", "run"]]
+        self.assertEqual(len(dispatches), 1)
+        self.assertIn("ci.yml", dispatches[0])
+
     def test_hash_mismatch_dispatches_once_during_visibility_cooldown(self):
         headers = self.headers("a.headers", "etag-a", self.dmg_a)
         self.complete_baseline(headers)
