@@ -817,6 +817,11 @@ function patchKeybindsSettingsAssets(extractedDir) {
       ),
       ...collectOptionalMatchingAssetPatches(
         extractedDir,
+        isSettingsVisibilityBundleSource,
+        applyLinuxDesktopSettingsVisibilityPatch,
+      ),
+      ...collectOptionalMatchingAssetPatches(
+        extractedDir,
         isSettingsSharedMetadataBundleSource,
         applyLinuxDesktopSettingsSharedPatch,
       ),
@@ -873,6 +878,27 @@ function applyKeybindsSettingsSectionsPatch(currentSource) {
   throw new Error("Required Keybinds settings patch failed: could not add keybinds settings section");
 }
 
+function applyLinuxDesktopSettingsVisibilityPatch(currentSource) {
+  // The current settings catalog filters every registered slug through a
+  // visibility switch. Registering the route, icon, order, and group is not
+  // sufficient: an unknown slug falls through and is removed from the sidebar.
+  // Keep this anchored to the always-visible general/keyboard-shortcuts cases
+  // so unrelated slug switches in the same chunk are left untouched.
+  const visibilityMarker = "case`linux-desktop`:return!0;";
+  const visibilityAnchorPattern = /case`general-settings`:(?=(?:case`[^`]+`:)*return!0;)/;
+  const hasSettingsVisibilitySwitch =
+    currentSource.includes("case`keyboard-shortcuts`:return!0")
+    && (currentSource.includes(visibilityMarker) || visibilityAnchorPattern.test(currentSource));
+  if (hasSettingsVisibilitySwitch && !currentSource.includes(visibilityMarker)) {
+    return currentSource.replace(
+      visibilityAnchorPattern,
+      `${visibilityMarker}case\`general-settings\`:`,
+    );
+  }
+
+  return currentSource;
+}
+
 function applyLinuxDesktopSettingsSectionsPatch(currentSource) {
   let patchedSource = currentSource;
   const unpatchedArrayOrderPattern = /([A-Za-z_$][\w$]*=\[`general-settings`,)(?!`linux-desktop`,)/g;
@@ -883,28 +909,27 @@ function applyLinuxDesktopSettingsSectionsPatch(currentSource) {
     /`general-settings\.(?!linux-desktop\.)[^`]*keyboard-shortcuts[^`]*`\.split\(`\.`\)/.test(source) ||
     /[A-Za-z_$][\w$]*=\[\{slug:(?:`general-settings`|[A-Za-z_$][\w$]*)\},(?!\{slug:`linux-desktop`\},)/.test(source);
 
-  if (!hasUnpatchedEligibleSectionShape(patchedSource)) {
-    return patchedSource;
+  if (hasUnpatchedEligibleSectionShape(patchedSource)) {
+    patchedSource = patchedSource.replace(
+      unpatchedArrayOrderPattern,
+      "$1`linux-desktop`,",
+    );
+    patchedSource = patchedSource.replace(
+      unpatchedSplitOrderPattern,
+      "$1linux-desktop.$2",
+    );
+    patchedSource = patchedSource.replace(
+      unpatchedObjectSlugListPattern,
+      "$1{slug:`linux-desktop`},",
+    );
+
+    if (hasUnpatchedEligibleSectionShape(patchedSource)) {
+      throw new Error("Required Keybinds settings patch failed: could not add Linux desktop settings section");
+    }
   }
 
-  patchedSource = patchedSource.replace(
-    unpatchedArrayOrderPattern,
-    "$1`linux-desktop`,",
-  );
-  patchedSource = patchedSource.replace(
-    unpatchedSplitOrderPattern,
-    "$1linux-desktop.$2",
-  );
-  patchedSource = patchedSource.replace(
-    unpatchedObjectSlugListPattern,
-    "$1{slug:`linux-desktop`},",
-  );
-
-  if (!hasUnpatchedEligibleSectionShape(patchedSource)) {
-    return patchedSource;
-  }
-
-  throw new Error("Required Keybinds settings patch failed: could not add Linux desktop settings section");
+  patchedSource = applyLinuxDesktopSettingsVisibilityPatch(patchedSource);
+  return patchedSource;
 }
 
 // Inserts a new `titleForSection` switch case after the upstream
@@ -1120,6 +1145,14 @@ function isSettingsSectionsMetadataBundleSource(currentSource) {
   ) || /`general-settings\.[^`]*keyboard-shortcuts[^`]*`\.split\(`\.`\)/.test(currentSource);
 }
 
+function isSettingsVisibilityBundleSource(currentSource) {
+  return currentSource.includes("case`keyboard-shortcuts`:return!0")
+    && (
+      currentSource.includes("case`linux-desktop`:return!0;")
+      || /case`general-settings`:(?=(?:case`[^`]+`:)*return!0;)/.test(currentSource)
+    );
+}
+
 function isSettingsSharedMetadataBundleSource(currentSource) {
   return currentSource.includes('"general-settings":{id:`settings.nav.general-settings`')
     || currentSource.includes("id:`settings.section.general-settings`,defaultMessage:`General`");
@@ -1208,7 +1241,7 @@ function applyLinuxDesktopSettingsNavigationPatch(currentSource) {
     patchedSource = patchedSource.replace(groupPattern, "$1`linux-desktop`,");
   }
 
-  return patchedSource;
+  return applyLinuxDesktopSettingsVisibilityPatch(patchedSource);
 }
 
 function applyLinuxDesktopSettingsIndexPatch(currentSource) {

@@ -1713,7 +1713,11 @@ function createModernNativeKeyboardShortcutsSettingsFixture() {
   );
   writeAsset(
     "use-visible-settings-sections-A.js",
-    'var Hn={"general-settings":wt,import:it,profile:pt,"keyboard-shortcuts":xn};export{Hn};',
+    [
+      'var Hn={"general-settings":wt,import:it,profile:pt,"keyboard-shortcuts":xn};',
+      "function visible(e){switch(e.slug){case`profile`:return y;case`general-settings`:case`agent`:case`personalization`:return!0;case`keyboard-shortcuts`:return!0}}",
+      "export{Hn};",
+    ].join(""),
   );
   writeAsset(
     "app-initial~app-main~page~remote-conversation-page~new-thread-panel-page~settings-page~shared-A.js",
@@ -1821,7 +1825,11 @@ function createSplitRouteNativeKeyboardShortcutsSettingsFixture({
   );
   writeAsset(
     "use-visible-settings-sections-A.js",
-    'var Hn={"general-settings":wt,import:it,profile:pt,"keyboard-shortcuts":xn};export{Hn};',
+    [
+      'var Hn={"general-settings":wt,import:it,profile:pt,"keyboard-shortcuts":xn};',
+      "function visible(e){switch(e.slug){case`profile`:return y;case`general-settings`:case`agent`:case`personalization`:return!0;case`keyboard-shortcuts`:return!0}}",
+      "export{Hn};",
+    ].join(""),
   );
   // The hoisted async route map is assigned inside an IIFE body.
   writeAsset(
@@ -6247,7 +6255,6 @@ test("adds Linux desktop settings when the lazy route map is hoisted into a sepa
     assert.doesNotMatch(settingsPageSource, /codexLinuxDesktopSettings/);
     assert.match(settingsPageSource, /=\[`general-settings`,`linux-desktop`,`import`,`profile`/);
     assert.match(settingsPageSource, /slugs:\[`general-settings`,`linux-desktop`,`import`,`profile`/);
-
     const visibleSectionsSource = fs.readFileSync(
       path.join(assetsDir, "use-visible-settings-sections-A.js"),
       "utf8",
@@ -6255,6 +6262,10 @@ test("adds Linux desktop settings when the lazy route map is hoisted into a sepa
     assert.match(
       visibleSectionsSource,
       /Hn=\{"linux-desktop":wt,"general-settings":wt,import:it,profile:pt,"keyboard-shortcuts":xn\}/,
+    );
+    assert.match(
+      visibleSectionsSource,
+      /case`linux-desktop`:return!0;case`general-settings`:case`agent`:case`personalization`:return!0/,
     );
 
     // The lazy route is registered in the hoisted app chunk, reusing the bundle's
@@ -6384,6 +6395,20 @@ test("adds Linux desktop section to current native Keyboard Shortcuts sections b
 
   assert.match(patched, /e=\[`general-settings`,`linux-desktop`,`profile`,`keyboard-shortcuts`/);
   assert.match(patched, /r=\[\{slug:`general-settings`\},\{slug:`linux-desktop`\},\{slug:`profile`\}/);
+});
+
+test("keeps the Linux desktop settings section visible in the current settings catalog", () => {
+  const source = [
+    "var e=[`general-settings`,`profile`,`keyboard-shortcuts`,`account`];",
+    "function visible(e){switch(e.slug){case`appshots`:return _;case`profile`:return y;case`general-settings`:case`agent`:case`personalization`:return!0;case`keyboard-shortcuts`:return!0}}",
+  ].join("");
+
+  const patched = applyPatchTwice(applyLinuxDesktopSettingsSectionsPatch, source);
+
+  assert.match(
+    patched,
+    /case`linux-desktop`:return!0;case`general-settings`:case`agent`:case`personalization`:return!0/,
+  );
 });
 
 test("adds Linux desktop section to split current section metadata bundle", () => {
