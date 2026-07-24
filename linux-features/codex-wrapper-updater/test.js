@@ -95,6 +95,7 @@ test("main bundle helper does not shadow minified module variables", () => {
 test("webview runtime renders dev-mode without an installed SHA chip", () => {
   const patched = applyWebviewRuntimePatch("console.log('codex');");
 
+  assert.match(patched, /codex-wrapper-updater-v4/);
   assert.doesNotMatch(patched, /codex-linux-wrapper-sha/);
   assert.match(patched, /dev-mode/);
   assert.match(patched, /\\u2699/);

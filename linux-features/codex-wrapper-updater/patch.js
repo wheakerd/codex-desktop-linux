@@ -5,7 +5,7 @@ const path = require("node:path");
 const { linuxSettingsKeys } = require("../../scripts/patches/lib/settings-keys.js");
 
 const HANDLER_NAME = "codex-linux-wrapper-updater";
-const RUNTIME_VERSION = "codex-wrapper-updater-v3";
+const RUNTIME_VERSION = "codex-wrapper-updater-v4";
 const LINUX_DESKTOP_SETTINGS_ASSET = "linux-desktop-settings-linux.js";
 const WRAPPER_UPDATES_SETTING_KEY = linuxSettingsKeys.wrapperUpdates;
 const FEATURE_PICKER_ON_UPDATE_SETTING_KEY = linuxSettingsKeys.featurePickerOnUpdate;

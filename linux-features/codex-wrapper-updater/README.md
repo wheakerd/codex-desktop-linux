@@ -60,7 +60,7 @@ features the rebuild stages.
 
 ## Update button states
 
-- The action chip is color-coded:
+- The action button is color-coded:
   - **green Update** means a genuinely newer upstream build is available.
   - **amber dev mode** (non-clickable) means the installed build appears to be
     ahead of the tracked remote, so updating would be a downgrade; the update
