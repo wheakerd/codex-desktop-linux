@@ -1216,6 +1216,9 @@ test("optional webview descriptors follow the current monolithic app chunk", () 
   const automationUpdate = descriptors.find(
     (descriptor) => descriptor.id === "automation-update-eager-tool",
   );
+  const browserUseAvailability = descriptors.find(
+    (descriptor) => descriptor.id === "linux-browser-use-availability",
+  );
   const tooltipCollision = descriptors.find(
     (descriptor) => descriptor.id === "linux-tooltip-window-controls-collision",
   );
@@ -1239,6 +1242,17 @@ test("optional webview descriptors follow the current monolithic app chunk", () 
   );
   assert.equal(
     automationUpdate.assetMatch("function unrelated(){return{deferLoading:!0}}"),
+    false,
+  );
+  assert.ok(browserUseAvailability);
+  assert.equal(
+    browserUseAvailability.pattern.test("app-initial-BTphDPeq.js"),
+    true,
+  );
+  assert.equal(
+    browserUseAvailability.pattern.test(
+      "use-in-app-browser-use-availability-B4Bdb14G.js",
+    ),
     false,
   );
   assert.ok(tooltipCollision);
